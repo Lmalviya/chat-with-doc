@@ -42,15 +42,17 @@ export function useConversation(conversationId) {
 
   useEffect(() => {
     if (!conversationId || conversationId === 'new') {
-      loadedConvIdRef.current = 'new';
-      setMessages([]);
-      setActiveLeafMessageId(null);
-      setTitle('');
-      setError(null);
+      if (loadedConvIdRef.current !== 'new') {
+        loadedConvIdRef.current = 'new';
+        setMessages([]);
+        setActiveLeafMessageId(null);
+        setTitle('');
+        setError(null);
+      }
       return;
     }
 
-    // If this conversation was just created in-memory by useStreaming, skip re-fetching
+    // If this conversation was just created in-memory by useStreaming or already active, skip re-fetching
     if (loadedConvIdRef.current === conversationId) {
       return;
     }
@@ -77,7 +79,7 @@ export function useConversation(conversationId) {
         if (err.status === 403) {
           setError(
             new Error(
-              'Session expired or access denied: This chat was created in a previous session or belongs to another user (anonymous sessions expire after 24h).'
+              'Session expired or access denied: This chat belongs to another user account.'
             )
           );
         } else if (err.status === 404) {

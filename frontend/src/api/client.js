@@ -1,13 +1,13 @@
 /**
- * Base API client.
+ * Base API client with Supabase JWT Bearer token authentication.
  *
  * All requests:
  *  - Prepend VITE_BACKEND_API_BASE_URL + '/api/v1' (default: http://localhost:8000/api/v1)
- *  - Set credentials: 'include' so the browser sends the HttpOnly anon_id cookie
+ *  - Attach 'Authorization: Bearer <token>' from active Supabase session
  *  - Support X-Request-Id header for idempotency correlation
- *
- * The frontend NEVER reads, writes, or generates anon_id — the backend owns that.
  */
+
+import { supabase } from './supabase.js';
 
 const RAW_BASE =
   (import.meta.env.VITE_BACKEND_API_BASE_URL ?? '').replace(/\/$/, '');
@@ -16,21 +16,16 @@ const BASE_URL = RAW_BASE
   ? (RAW_BASE.endsWith('/api/v1') ? RAW_BASE : `${RAW_BASE}/api/v1`)
   : '/api/v1';
 
-const STORAGE_KEY_ANON_ID = 'docmind_anon_id';
-
-export function getStoredAnonId() {
+/**
+ * Retrieve the current active Supabase access token (JWT).
+ * @returns {Promise<string|null>}
+ */
+export async function getAuthToken() {
   try {
-    return localStorage.getItem(STORAGE_KEY_ANON_ID) || null;
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token || null;
   } catch {
     return null;
-  }
-}
-
-export function setStoredAnonId(id) {
-  try {
-    if (id) localStorage.setItem(STORAGE_KEY_ANON_ID, id);
-  } catch {
-    /* ignore storage errors */
   }
 }
 
@@ -39,16 +34,16 @@ export function setStoredAnonId(id) {
  *
  * @param {string} path - e.g. '/conversations'
  * @param {RequestInit & { requestId?: string }} options
- * @returns {Promise<Response>} raw Response (callers decide how to parse)
+ * @returns {Promise<Response>} raw Response
  */
 export async function apiFetch(path, options = {}) {
   const { requestId, headers: extraHeaders, ...rest } = options;
-  const storedAnonId = getStoredAnonId();
+  const token = await getAuthToken();
 
   const headers = {
     'Content-Type': 'application/json',
     ...(requestId ? { 'X-Request-Id': requestId } : {}),
-    ...(storedAnonId ? { 'X-Anon-Id': storedAnonId } : {}),
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
     ...extraHeaders,
   };
 
@@ -59,14 +54,8 @@ export async function apiFetch(path, options = {}) {
 
   const response = await fetch(`${BASE_URL}${path}`, {
     ...rest,
-    credentials: 'include',
     headers,
   });
-
-  const returnedAnonId = response.headers.get('x-anon-id');
-  if (returnedAnonId) {
-    setStoredAnonId(returnedAnonId);
-  }
 
   return response;
 }
@@ -101,12 +90,7 @@ export async function apiJSON(path, options = {}) {
 }
 
 /**
- * Upload a file directly to a presigned URL (no auth headers — the URL itself is the credential).
- *
- * @param {string} presignedUrl
- * @param {File} file
- * @param {{ onProgress?: (pct: number) => void, signal?: AbortSignal }} options
- * @returns {Promise<void>}
+ * Upload a file directly to a presigned URL.
  */
 export function uploadToStorage(presignedUrl, file, { onProgress, signal } = {}) {
   return new Promise((resolve, reject) => {

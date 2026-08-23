@@ -18,6 +18,34 @@ class MessageRepository:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def validate_or_heal_parent_id(
+        self,
+        conversation_id: uuid.UUID,
+        parent_id: uuid.UUID | None,
+    ) -> uuid.UUID | None:
+        """
+        Validates that parent_id exists in the database for the given conversation.
+        If parent_id is missing/invalid, auto-heals to the most recent message in the conversation.
+        """
+        if parent_id is not None:
+            stmt = select(Messages.id).where(
+                Messages.id == parent_id,
+                Messages.conversation_id == conversation_id,
+            )
+            exists = (await self.db.execute(stmt)).scalar_one_or_none()
+            if exists is not None:
+                return parent_id
+
+        # Auto-heal to the latest message in this conversation
+        latest_stmt = (
+            select(Messages.id)
+            .where(Messages.conversation_id == conversation_id)
+            .order_by(Messages.created_at.desc())
+            .limit(1)
+        )
+        latest_id = (await self.db.execute(latest_stmt)).scalar_one_or_none()
+        return latest_id
+
     async def add(
         self,
         conversation_id: uuid.UUID,
@@ -27,6 +55,9 @@ class MessageRepository:
         parent_id:       uuid.UUID | None = None,
         status:          str = MessageStatus.COMPLETE.value,
     ) -> Messages:
+        # Validate parent foreign key
+        healed_parent_id = await self.validate_or_heal_parent_id(conversation_id, parent_id)
+
         stmt = (
             insert(Messages)
             .values(
@@ -34,7 +65,7 @@ class MessageRepository:
                 request_id=request_id,
                 role=role,
                 content=content,
-                parent_id=parent_id,
+                parent_id=healed_parent_id,
                 status=status,
             )
             .returning(Messages)
@@ -72,7 +103,7 @@ class MessageRepository:
 class MessageService:
     """
     Business logic for messages.
-    Orchestrates: idempotency check → save message → (AI call placeholder).
+    Orchestrates: idempotency check → save message → history resolution.
     """
 
     def __init__(self, db: AsyncSession) -> None:

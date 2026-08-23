@@ -10,12 +10,14 @@ class ModelConfig(BaseModel):
 
 REWRITER_PRIMARY_CONFIG = ModelConfig(
     model_name="gemini-3.6-flash",
-    temperature=0.1
+    temperature=0.1,
+    timeout=10.0,
 )
 
 REWRITER_FALLBACK_CONFIG = ModelConfig(
     model_name="nvidia/nemotron-3.5-lightning-30b-a3b",
-    temperature=0.1
+    temperature=0.1,
+    timeout=15.0,
 )
 
 GENERATOR_PRIMARY_CONFIG = ModelConfig(

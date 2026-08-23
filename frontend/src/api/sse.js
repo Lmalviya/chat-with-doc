@@ -1,13 +1,7 @@
-import { BASE_URL, getStoredAnonId, setStoredAnonId } from './client.js';
+import { BASE_URL, getAuthToken } from './client.js';
 
 /**
- * Fetch-based SSE (Server-Sent Events) streaming.
- *
- * Backend streams text/event-stream with lines:
- *   data: {"type":"meta","conversation_id":"...","user_message_id":"..."}\n\n
- *   data: {"type":"chunk","delta":"Hello"}\n\n
- *   data: {"type":"done","message_id":"...","conversation_id":"..."}\n\n
- *   data: [DONE]\n\n
+ * Fetch-based SSE (Server-Sent Events) streaming with Supabase Bearer Auth.
  *
  * @param {{
  *   path: string,
@@ -36,16 +30,15 @@ export function streamSSE({ path, body, requestId, signal, onMeta, onStatus, onT
 
   (async () => {
     let response;
-    const storedAnonId = getStoredAnonId();
+    const token = await getAuthToken();
     try {
       response = await fetch(`${BASE_URL}${path}`, {
         method: 'POST',
-        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
           ...(requestId ? { 'X-Request-Id': requestId } : {}),
-          ...(storedAnonId ? { 'X-Anon-Id': storedAnonId } : {}),
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
         },
         body: JSON.stringify(body),
         signal: combinedSignal,
@@ -54,11 +47,6 @@ export function streamSSE({ path, body, requestId, signal, onMeta, onStatus, onT
       if (err.name === 'AbortError') return;
       onError?.(err);
       return;
-    }
-
-    const returnedAnonId = response.headers.get('x-anon-id');
-    if (returnedAnonId) {
-      setStoredAnonId(returnedAnonId);
     }
 
     if (!response.ok) {

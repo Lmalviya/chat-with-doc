@@ -1,7 +1,8 @@
 import { useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { IconSparkles, IconClock, IconFileText, IconDatabase } from '@tabler/icons-react';
+import { IconSparkles, IconShieldCheck, IconFileText, IconDatabase } from '@tabler/icons-react';
 import { InputBar } from '../input/InputBar.jsx';
+import { useAuth } from '../../store/AuthContext.jsx';
 import styles from './LandingView.module.css';
 
 const SUGGESTIONS = [
@@ -13,12 +14,19 @@ const SUGGESTIONS = [
 /**
  * Landing / empty state — shown at route '/'.
  *
- * - Centered greeting + subtitle + suggestion chips
- * - Session indicator badge
+ * - Centered greeting with user personalization
+ * - Persistent workspace security badge
  * - Input bar to start a new chat
  */
 export function LandingView() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+
+  const displayName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split('@')[0] ||
+    '';
 
   const handleSend = useCallback((content) => {
     const requestId = crypto.randomUUID();
@@ -33,13 +41,15 @@ export function LandingView() {
     <div className={styles.root}>
       <div className={styles.hero}>
         <div className={styles.sessionBadge}>
-          <IconClock size={14} stroke={1.75} />
-          <span>Private 24-Hour Anonymous Workspace</span>
+          <IconShieldCheck size={14} stroke={1.75} />
+          <span>Personal AI Document Workspace</span>
         </div>
 
-        <h1 className={styles.heading}>What are you working on?</h1>
+        <h1 className={styles.heading}>
+          {displayName ? `What are you working on, ${displayName}?` : 'What are you working on?'}
+        </h1>
         <p className={styles.subtitle}>
-          Upload documents and ask questions — your AI research assistant is ready.
+          Upload documents and ask questions — your persistent research assistant is ready.
         </p>
 
         <div className={styles.suggestionsList}>

@@ -43,6 +43,21 @@ class Settings(BaseSettings):
     LANGCHAIN_HUB_OWNER: str | None = None
     LANGSMITH_HUB_OWNER: str | None = None
 
+    # Supabase Configuration & JWT Authentication
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_JWT_SECRET: str = ""
+    JWT_ALGORITHM: str = "HS256"
+
+    @computed_field
+    @property
+    def SUPABASE_PROJECT_URL(self) -> str:
+        if self.SUPABASE_URL:
+            return self.SUPABASE_URL.rstrip("/")
+        if self.DATABASE_PROJECT_REF:
+            return f"https://{self.DATABASE_PROJECT_REF}.supabase.co"
+        return ""
+
     @computed_field
     @property
     def DATABASE_URL(self) -> str:

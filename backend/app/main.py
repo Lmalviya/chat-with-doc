@@ -4,12 +4,13 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from app.core.database import database_engine, Base
 from app.core.exceptions import AppException
 from app.core.logging import setup_logging
-from app.core.middleware import session_middleware, request_logging_middleware
+from app.core.middleware import request_logging_middleware
 
 # Initialize centralized logging
 setup_logging()
@@ -21,6 +22,7 @@ import app.conversations.models         # noqa: F401
 import app.messages.models              # noqa: F401
 import app.documents.models             # noqa: F401
 
+from app.auth.router import auth_router
 from app.conversations.router import conversations_router
 from app.messages.router import messages_router
 
@@ -30,23 +32,28 @@ from app.messages.router import messages_router
 async def lifespan(app: FastAPI):
     async with database_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Automatic non-destructive schema adjustments for Supabase user sync
+        try:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255);"))
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(255);"))
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;"))
+            await conn.execute(text("ALTER TABLE users ALTER COLUMN expires_at DROP NOT NULL;"))
+        except Exception:
+            pass
     yield
 
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Q&A Bot With Docs",
-    description="Chat application with document-aware AI responses",
+    description="Chat application with document-aware AI responses and persistent Supabase user accounts",
     version="1.0.0",
     lifespan=lifespan,
 )
 
 
 # ── Middleware ─────────────────────────────────────────────────────────────────
-# Session middleware
-app.add_middleware(BaseHTTPMiddleware, dispatch=session_middleware)
-
-# Request logging middleware runs inside CORS but before session
+# Request logging middleware runs inside CORS
 app.add_middleware(BaseHTTPMiddleware, dispatch=request_logging_middleware)
 
 # CORS middleware is outermost to allow cross-origin requests and preflights
@@ -60,7 +67,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Anon-Id", "X-Request-Id", "Set-Cookie"],
+    expose_headers=["Authorization", "X-Request-Id"],
 )
 
 
@@ -90,6 +97,7 @@ async def db_generic_error_handler(request: Request, exc: SQLAlchemyError):
 
 
 # ── Routes ─────────────────────────────────────────────────────────────────────
+app.include_router(auth_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(messages_router, prefix="/api/v1")
 

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from langchain_core.prompts import ChatPromptTemplate
 # from langchain_core.messages import SystemMessage
 # from langchain_core.output_parsers import PydanticOutputParser
-from langchain_core.messages import SystemMessage, BaseMessage
+from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage
 from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import Runnable

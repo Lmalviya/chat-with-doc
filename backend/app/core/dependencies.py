@@ -1,8 +1,14 @@
 import uuid
-from fastapi import Request, Header, HTTPException
+from fastapi import Request, Header, HTTPException, Depends, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from app.core.database import AsyncSessionLocal
+from app.core.users import Users
+from app.auth.security import decode_supabase_token
+
+security_scheme = HTTPBearer(auto_error=False)
 
 
 # ── Database session ───────────────────────────────────────────────────────────
@@ -14,34 +20,96 @@ async def get_db() -> AsyncSession:
         await session.aclose()
 
 
-async def get_anon_id(request: Request) -> uuid.UUID:
-    # 1. Retrieve session ID created/loaded by session_middleware in request.state
-    anon_id = getattr(request.state, "anon_id", None)
-    if anon_id is not None:
-        if isinstance(anon_id, uuid.UUID):
-            return anon_id
-        try:
-            return uuid.UUID(str(anon_id))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid session id format")
+# ── Authenticated Supabase User Dependency ─────────────────────────────────────
+async def get_current_user(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(security_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> Users:
+    token: str | None = None
 
-    # 2. Check X-Anon-Id or X-Session-Id header (fallback for non-cookie clients)
-    header_anon = request.headers.get("x-anon-id") or request.headers.get("x-session-id")
-    if header_anon:
-        try:
-            return uuid.UUID(header_anon)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid session id format")
+    # 1. Extract Bearer token from Authorization header
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+    elif request.headers.get("Authorization"):
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1]
 
-    # 3. Fallback to cookie if state is not set
-    cookie_anon = request.cookies.get("anon_id")
-    if cookie_anon:
-        try:
-            return uuid.UUID(cookie_anon)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid session id format")
+    # 2. Fallback to query parameter (useful for event streams / media URLs)
+    if not token and request.query_params.get("token"):
+        token = request.query_params.get("token")
 
-    raise HTTPException(status_code=401, detail="Missing session")
+    # 3. Fallback to cookie
+    if not token and request.cookies.get("sb-access-token"):
+        token = request.cookies.get("sb-access-token")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Please log in.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    payload = decode_supabase_token(token)
+    if not payload or "sub" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session. Please log in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        user_id = uuid.UUID(payload["sub"])
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid user ID format in authentication token.",
+        )
+
+    # Auto-sync / verify user in public.users table
+    email = payload.get("email")
+    user_metadata = payload.get("user_metadata") or {}
+    name = user_metadata.get("full_name") or user_metadata.get("name") or user_metadata.get("user_name")
+
+    stmt = select(Users).where(Users.id == user_id)
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
+
+    if not user:
+        # First-time sync: create public.users record linked to Supabase auth.users
+        user = Users(
+            id=user_id,
+            email=email,
+            name=name,
+        )
+        db.add(user)
+        try:
+            await db.commit()
+            await db.refresh(user)
+        except Exception:
+            await db.rollback()
+            # If concurrent insert happened, re-fetch
+            result = await db.execute(select(Users).where(Users.id == user_id))
+            user = result.scalar_one_or_none()
+            if not user:
+                # Return in-memory user instance
+                user = Users(id=user_id, email=email, name=name)
+
+    return user
+
+
+async def get_current_user_id(
+    user: Users = Depends(get_current_user),
+) -> uuid.UUID:
+    return user.id
+
+
+# Backward compatibility alias for existing routers
+async def get_anon_id(
+    user: Users = Depends(get_current_user),
+) -> uuid.UUID:
+    return user.id
 
 
 # ── Per-request idempotency key (sent by client as X-Request-ID header) ───────
