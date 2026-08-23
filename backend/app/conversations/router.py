@@ -1,0 +1,133 @@
+import uuid
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Path, status
+from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.dependencies import get_db, get_anon_id, get_request_id
+from app.conversations.service import ConversationRepository, ConversationService
+from app.conversations.schemas import (
+    CreateConversationRequest,
+    UpdateTitleRequest,
+    ConversationOut,
+    ConversationDetailResponse,
+    GenerateTitleRequest,
+    GenerateTitleResponse
+)
+from app.messages.service import MessageService
+
+conversations_router = APIRouter(
+    prefix="/conversations",
+    tags=["conversations"],
+)
+
+
+@conversations_router.post("/{conversation_id}/title/generate", response_model=GenerateTitleResponse)
+async def generate_title(
+    payload:         GenerateTitleRequest,
+    conversation_id: Annotated[uuid.UUID, Path()],
+    user_id:         uuid.UUID = Depends(get_anon_id),
+    request_id:      uuid.UUID | None = Depends(get_request_id),
+    db:              AsyncSession = Depends(get_db)
+):
+    """
+    Generate title using LLM in parallel with the first conversation message.
+    Updates the conversation record in database and returns the generated title.
+    """
+    service = ConversationService(db)
+    conv = await service.generate_title(
+        user_id=user_id,
+        conversation_id=conversation_id,
+        content=payload.content,
+        request_id=request_id,
+    )
+
+    return GenerateTitleResponse(
+        title=conv.title or "",
+        conversation_id=conv.id,
+    )
+
+
+@conversations_router.post("/")
+async def start_conversation(
+    payload:    CreateConversationRequest,
+    user_id:    uuid.UUID = Depends(get_anon_id),
+    request_id: uuid.UUID | None = Depends(get_request_id),
+    db:         AsyncSession = Depends(get_db),
+):
+    """
+    Send the first message — creates the conversation and streams back the assistant response.
+    SSE events:
+      1. {"type": "meta", "conversation_id": "...", "user_message_id": "..."}
+      2. {"type": "chunk", "delta": "..."}
+      3. {"type": "done", "message_id": "...", "conversation_id": "..."}
+    """
+    service = ConversationService(db)
+    return StreamingResponse(
+        service.start_conversation_stream(
+            user_id=user_id,
+            request_id=request_id,
+            content=payload.content,
+        ),
+        media_type="text/event-stream",
+    )
+
+
+@conversations_router.get("/", response_model=list[ConversationOut])
+async def list_conversations(
+    user_id: uuid.UUID = Depends(get_anon_id),
+    db:      AsyncSession = Depends(get_db),
+):
+    """Return all conversations for the current user, newest first (for sidebar)."""
+    repo = ConversationRepository(db)
+    rows = await repo.get_all(user_id)
+    return [ConversationOut.model_validate(r) for r in rows]
+
+
+@conversations_router.get("/{conversation_id}", response_model=ConversationDetailResponse)
+async def get_conversation(
+    conversation_id: Annotated[uuid.UUID, Path()],
+    user_id:         uuid.UUID = Depends(get_anon_id),
+    db:              AsyncSession = Depends(get_db),
+):
+    """Return conversation metadata + initial message history (50 most recent)."""
+    repo = ConversationRepository(db)
+    conv = await repo.get_by_id(conversation_id, user_id)
+
+    msg_service = MessageService(db)
+    messages = await msg_service.get_history(conversation_id)
+
+    return ConversationDetailResponse(
+        conversation=ConversationOut.model_validate(conv),
+        messages=messages,
+    )
+
+
+@conversations_router.patch("/{conversation_id}", response_model=ConversationOut)
+async def update_title(
+    conversation_id: Annotated[uuid.UUID, Path()],
+    payload:         UpdateTitleRequest,
+    user_id:         uuid.UUID = Depends(get_anon_id),
+    db:              AsyncSession = Depends(get_db),
+):
+    """Rename a conversation manually."""
+    repo = ConversationRepository(db)
+    await repo.get_by_id(conversation_id, user_id)   # ownership check
+    conv = await repo.update_title(conversation_id, payload.title)
+    return ConversationOut.model_validate(conv)
+
+
+@conversations_router.delete(
+    "/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_conversation(
+    conversation_id: Annotated[uuid.UUID, Path()],
+    user_id:         uuid.UUID = Depends(get_anon_id),
+    db:              AsyncSession = Depends(get_db),
+):
+    """Delete a conversation and all its messages (cascade)."""
+    repo = ConversationRepository(db)
+    conv = await repo.get_by_id(conversation_id, user_id)
+    await repo.delete(conv)

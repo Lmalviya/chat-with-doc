@@ -1,0 +1,114 @@
+.wrapper {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+}
+
+/* User message — right-aligned bubble */
+.user {
+  align-items: flex-end;
+}
+
+.user .bubble {
+  background: var(--bg-user-bubble);
+  color: var(--text-user-bubble);
+  border-radius: var(--radius-lg) var(--radius-lg) var(--radius-sm) var(--radius-lg);
+  padding: 10px 14px;
+  max-width: 65%;
+  word-break: break-word;
+}
+
+/* Assistant message — left-aligned, no bubble */
+.assistant {
+  align-items: flex-start;
+}
+
+.assistant .bubble {
+  max-width: 100%;
+  padding: 4px 0;
+}
+
+.bubble {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.userText p {
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* Stopped / failed indicators */
+.stoppedBadge {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  font-style: italic;
+}
+
+.errorRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  background: var(--danger-subtle);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-sm);
+}
+
+.errorIcon { color: var(--danger); flex-shrink: 0; }
+.errorText { font-size: 0.8125rem; color: var(--danger); flex: 1; }
+
+.retryBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--accent);
+  padding: 2px 8px;
+  border: 1px solid var(--accent-muted);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.retryBtn:hover { background: var(--accent-subtle); }
+
+/* Dev-only trace link */
+.traceLink {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  opacity: 0.6;
+  margin-top: 2px;
+}
+
+.traceLink:hover { opacity: 1; }
+
+/* Meta row: branch switcher + actions */
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  min-height: 28px;
+}
+
+.user .meta { justify-content: flex-end; }
+.assistant .meta { justify-content: flex-start; }
+
+.meta :global(.actions) { opacity: 0; transition: opacity var(--transition-fast); }
+.metaVisible :global(.actions) { opacity: 1; }
+
+/* Inline editor wrapper */
+.editorWrapper {
+  width: 100%;
+  max-width: 65%;
+}
+
+.user .editorWrapper {
+  align-self: flex-end;
+}
