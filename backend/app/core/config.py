@@ -26,10 +26,11 @@ class Settings(BaseSettings):
     DATABASE_PORT: int = 5432
     DATABASE_NAME: str = ""
 
-    OBJECT_STORAGE_KEY_ID: str | None = None
-    OBJECT_STORAGE_SECRET_KEY: str | None = None
-    OBJECT_STORAGE_ENDPOINT_URL: str | None = None
-    OBJECT_STORAGE_NAME: str | None = None
+    R2_ACCOUNT_ID: str | None = None
+    R2_ACCESS_KEY_ID: str | None = None
+    R2_SECRET_ACCESS_KEY: str | None = None
+    R2_BUCKET_NAME: str | None = None
+
 
     NVIDIA_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
@@ -48,6 +49,10 @@ class Settings(BaseSettings):
     SUPABASE_ANON_KEY: str = ""
     SUPABASE_JWT_SECRET: str = ""
     JWT_ALGORITHM: str = "HS256"
+
+    @property
+    def R2_ENDPOINT_URL(self) -> str:
+        return f"https://{self.R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
     @computed_field
     @property

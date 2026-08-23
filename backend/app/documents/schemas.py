@@ -50,3 +50,18 @@ class DocumentBatchUpdateSchema(BaseModel):
     document_ids: list[uuid.UUID]
     file_status: FileStatus | None = None
     file_ingestion_status: FileIngestionStatus | None = None
+
+
+class DocumentPresignRequest(BaseModel):
+    file_name: str
+    file_bytes: int
+    file_type: str
+    file_hash: str | None = None
+
+class DocumentPresignResponse(BaseModel):
+    document_id: uuid.UUID
+    upload_url: str
+    file_path: str
+    is_duplicate: bool
+    file_status: str
+    
