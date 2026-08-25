@@ -1,5 +1,6 @@
 import uuid
-from fastapi import Request, Header, HTTPException, Depends, status
+from typing import Annotated
+from fastapi import Request, Header, HTTPException, Depends, Path, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -7,6 +8,7 @@ from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.core.users import Users
 from app.auth.security import decode_supabase_token
+from app.conversations.models import Conversations
 
 security_scheme = HTTPBearer(auto_error=False)
 
@@ -65,6 +67,7 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid user ID format in authentication token.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     # Auto-sync / verify user in public.users table
@@ -105,7 +108,22 @@ async def get_current_user_id(
     return user.id
 
 
-# Backward compatibility alias for existing routers
+# ── Conversation Validation Dependency (Tenant Security) ───────────────────────
+async def get_validated_conversation(
+    conversation_id: Annotated[uuid.UUID, Path()],
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> Conversations:
+    """
+    Verifies that the conversation exists AND belongs to the requesting user.
+    Raises 404 if not found or 403 if it belongs to another tenant.
+    """
+    from app.conversations.service import ConversationRepository
+    repo = ConversationRepository(db)
+    return await repo.get_by_id(conversation_id, user_id)
+
+
+# Backward compatibility alias
 async def get_anon_id(
     user: Users = Depends(get_current_user),
 ) -> uuid.UUID:

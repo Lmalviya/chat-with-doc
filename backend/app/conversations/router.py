@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Path, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.dependencies import get_db, get_anon_id, get_request_id
+from app.core.dependencies import get_db, get_current_user_id, get_request_id
 from app.conversations.service import ConversationRepository, ConversationService
 from app.conversations.schemas import (
     CreateConversationRequest,
@@ -13,7 +13,7 @@ from app.conversations.schemas import (
     ConversationOut,
     ConversationDetailResponse,
     GenerateTitleRequest,
-    GenerateTitleResponse
+    GenerateTitleResponse,
 )
 from app.messages.service import MessageService
 
@@ -27,20 +27,20 @@ conversations_router = APIRouter(
 async def generate_title(
     payload:         GenerateTitleRequest,
     conversation_id: Annotated[uuid.UUID, Path()],
-    user_id:         uuid.UUID = Depends(get_anon_id),
+    user_id:         uuid.UUID = Depends(get_current_user_id),
     request_id:      uuid.UUID | None = Depends(get_request_id),
-    db:              AsyncSession = Depends(get_db)
+    db:              AsyncSession = Depends(get_db),
 ):
     """
     Generate title using LLM in parallel with the first conversation message.
     Updates the conversation record in database and returns the generated title.
     """
     service = ConversationService(db)
-    conv = await service.generate_title(
-        user_id=user_id,
+    conv = await service.get_or_generate_title(
         conversation_id=conversation_id,
-        content=payload.content,
+        user_id=user_id,
         request_id=request_id,
+        first_message_content=payload.content,
     )
 
     return GenerateTitleResponse(
@@ -52,7 +52,7 @@ async def generate_title(
 @conversations_router.post("/")
 async def start_conversation(
     payload:    CreateConversationRequest,
-    user_id:    uuid.UUID = Depends(get_anon_id),
+    user_id:    uuid.UUID = Depends(get_current_user_id),
     request_id: uuid.UUID | None = Depends(get_request_id),
     db:         AsyncSession = Depends(get_db),
 ):
@@ -76,7 +76,7 @@ async def start_conversation(
 
 @conversations_router.get("/", response_model=list[ConversationOut])
 async def list_conversations(
-    user_id: uuid.UUID = Depends(get_anon_id),
+    user_id: uuid.UUID = Depends(get_current_user_id),
     db:      AsyncSession = Depends(get_db),
 ):
     """Return all conversations for the current user, newest first (for sidebar)."""
@@ -88,7 +88,7 @@ async def list_conversations(
 @conversations_router.get("/{conversation_id}", response_model=ConversationDetailResponse)
 async def get_conversation(
     conversation_id: Annotated[uuid.UUID, Path()],
-    user_id:         uuid.UUID = Depends(get_anon_id),
+    user_id:         uuid.UUID = Depends(get_current_user_id),
     db:              AsyncSession = Depends(get_db),
 ):
     """Return conversation metadata + initial message history (50 most recent)."""
@@ -108,12 +108,12 @@ async def get_conversation(
 async def update_title(
     conversation_id: Annotated[uuid.UUID, Path()],
     payload:         UpdateTitleRequest,
-    user_id:         uuid.UUID = Depends(get_anon_id),
+    user_id:         uuid.UUID = Depends(get_current_user_id),
     db:              AsyncSession = Depends(get_db),
 ):
     """Rename a conversation manually."""
     repo = ConversationRepository(db)
-    await repo.get_by_id(conversation_id, user_id)   # ownership check
+    await repo.get_by_id(conversation_id, user_id)
     conv = await repo.update_title(conversation_id, payload.title)
     return ConversationOut.model_validate(conv)
 
@@ -124,10 +124,10 @@ async def update_title(
 )
 async def delete_conversation(
     conversation_id: Annotated[uuid.UUID, Path()],
-    user_id:         uuid.UUID = Depends(get_anon_id),
+    user_id:         uuid.UUID = Depends(get_current_user_id),
     db:              AsyncSession = Depends(get_db),
 ):
     """Delete a conversation and all its messages (cascade)."""
     repo = ConversationRepository(db)
-    conv = await repo.get_by_id(conversation_id, user_id)
-    await repo.delete(conv)
+    await repo.get_by_id(conversation_id, user_id)
+    await repo.delete(conversation_id)

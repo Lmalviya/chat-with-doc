@@ -25,6 +25,7 @@ import app.documents.models             # noqa: F401
 from app.auth.router import auth_router
 from app.conversations.router import conversations_router
 from app.messages.router import messages_router
+from app.documents.router import documents_router
 
 
 # ── Lifespan ───────────────────────────────────────────────────────────────────
@@ -100,6 +101,7 @@ async def db_generic_error_handler(request: Request, exc: SQLAlchemyError):
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(conversations_router, prefix="/api/v1")
 app.include_router(messages_router, prefix="/api/v1")
+app.include_router(documents_router, prefix="/api/v1")
 
 
 @app.get("/health", tags=["health"])
