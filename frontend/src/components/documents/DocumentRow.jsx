@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { IconEye, IconRefresh, IconFile } from '@tabler/icons-react';
+import { IconEye, IconDownload, IconTrash } from '@tabler/icons-react';
 import { KebabMenu } from '../ui/KebabMenu.jsx';
 import { InlineDeleteConfirm } from './InlineDeleteConfirm.jsx';
 import { DOC_STATUS } from '../../utils/constants.js';
@@ -18,11 +18,20 @@ const STATUS_LABELS = {
  * @param {{
  *   document: Object,
  *   onView: (doc: Object) => void,
- *   onReplace: (doc: Object) => void,
+ *   onDownload?: (docId: string) => void,
  *   onDelete: (docId: string) => void,
+ *   isSelected?: boolean,
+ *   onToggleSelect?: (docId: string) => void,
  * }} props
  */
-export function DocumentRow({ document: doc, onView, onReplace, onDelete }) {
+export function DocumentRow({
+  document: doc,
+  onView,
+  onDownload,
+  onDelete,
+  isSelected = false,
+  onToggleSelect,
+}) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const ext = getExtension(doc.filename);
@@ -40,14 +49,25 @@ export function DocumentRow({ document: doc, onView, onReplace, onDelete }) {
   }
 
   return (
-    <div className={styles.row}>
+    <div className={`${styles.row} ${isSelected ? styles.selectedRow : ''}`}>
+      {/* Optional multi-select checkbox */}
+      {onToggleSelect && (
+        <input
+          type="checkbox"
+          checked={isSelected}
+          onChange={() => onToggleSelect(doc.document_id)}
+          className={styles.checkbox}
+          aria-label={`Select ${doc.filename}`}
+        />
+      )}
+
       {/* File type badge */}
       <span className={styles.typeBadge} aria-hidden="true">
         {typeLabel}
       </span>
 
       {/* File info */}
-      <div className={styles.info}>
+      <div className={styles.info} onClick={() => onView(doc)} role="button" tabIndex={0}>
         <span className={styles.filename} title={doc.filename}>
           {doc.filename}
         </span>
@@ -70,18 +90,22 @@ export function DocumentRow({ document: doc, onView, onReplace, onDelete }) {
         ariaLabel={`Options for ${doc.filename}`}
         items={[
           {
-            label: 'View',
+            label: 'View / Preview',
             icon: <IconEye size={14} />,
             onClick: () => onView(doc),
           },
-          {
-            label: 'Replace',
-            icon: <IconRefresh size={14} />,
-            onClick: () => onReplace(doc),
-          },
+          ...(onDownload
+            ? [
+                {
+                  label: 'Download',
+                  icon: <IconDownload size={14} />,
+                  onClick: () => onDownload(doc.document_id),
+                },
+              ]
+            : []),
           {
             label: 'Delete',
-            icon: <IconFile size={14} />,
+            icon: <IconTrash size={14} />,
             danger: true,
             onClick: () => setConfirmingDelete(true),
           },

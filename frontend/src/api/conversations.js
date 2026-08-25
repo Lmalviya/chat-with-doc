@@ -15,6 +15,21 @@ export async function getConversations() {
 }
 
 /**
+ * POST /conversations/draft
+ * Create an empty conversation in the database so documents can be attached before first message.
+ *
+ * @returns {Promise<{conversation_id: string, title: string, updated_at: string}>}
+ */
+export async function createDraftConversation() {
+  const data = await apiJSON('/conversations/draft', { method: 'POST' });
+  return {
+    conversation_id: data.id,
+    title: data.title || '',
+    updated_at: data.updated_at,
+  };
+}
+
+/**
  * GET /conversations/:id
  * Returns conversation metadata + all messages.
  *

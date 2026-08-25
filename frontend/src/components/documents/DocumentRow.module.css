@@ -6,10 +6,22 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
   background: var(--bg-surface);
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .row:hover { background: var(--bg-hover); }
+
+.selectedRow {
+  border-color: var(--accent-primary, #6366f1);
+  background: var(--bg-hover);
+}
+
+.checkbox {
+  cursor: pointer;
+  accent-color: var(--accent-primary, #6366f1);
+  width: 15px;
+  height: 15px;
+}
 
 .typeBadge {
   flex-shrink: 0;

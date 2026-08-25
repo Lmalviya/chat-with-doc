@@ -49,6 +49,20 @@ async def generate_title(
     )
 
 
+@conversations_router.post("/draft", response_model=ConversationOut)
+async def create_empty_conversation(
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db:      AsyncSession = Depends(get_db),
+):
+    """
+    Creates an empty conversation record in database so documents can be attached
+    before sending the first message.
+    """
+    repo = ConversationRepository(db)
+    conv = await repo.create(user_id)
+    return ConversationOut.model_validate(conv)
+
+
 @conversations_router.post("/")
 async def start_conversation(
     payload:    CreateConversationRequest,
@@ -81,7 +95,7 @@ async def list_conversations(
 ):
     """Return all conversations for the current user, newest first (for sidebar)."""
     repo = ConversationRepository(db)
-    rows = await repo.get_all(user_id)
+    rows = await repo.list_by_user(user_id)
     return [ConversationOut.model_validate(r) for r in rows]
 
 

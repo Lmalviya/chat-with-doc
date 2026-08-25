@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { IconX } from '@tabler/icons-react';
+import { useNavigate } from 'react-router-dom';
+import { IconX, IconTrash } from '@tabler/icons-react';
 import { DocumentRow } from '../documents/DocumentRow.jsx';
 import { DocumentViewer } from '../documents/DocumentViewer.jsx';
 import { UploadDropzone } from '../documents/UploadDropzone.jsx';
@@ -13,56 +14,53 @@ import styles from './DocumentPopup.module.css';
  * Document attach popup — shown when the user clicks the attach button.
  *
  * Contains:
- *  - Upload dropzone
- *  - List of conversation-scoped documents
- *  - Per-row: View / Replace / Delete via kebab menu
+ *  - Multi-file Upload dropzone (works even on /c/new)
+ *  - Batch selection toolbar ("Select All", "Delete Selected", "Delete All")
+ *  - List of conversation-scoped documents with direct download & view
  *
  * @param {{
  *   isOpen: boolean,
  *   onClose: () => void,
  *   conversationId: string | null,
- *   anchorRef?: React.RefObject<HTMLElement>,
  * }} props
  */
 export function DocumentPopup({ isOpen, onClose, conversationId }) {
   const containerRef = useRef(null);
+  const navigate = useNavigate();
   useFocusTrap(containerRef, { active: isOpen, onClose });
 
-  const { documents, isLoading, loadDocuments, uploadFile, removeDocument } =
-    useDocuments(conversationId);
+  const {
+    documents,
+    isLoading,
+    loadDocuments,
+    uploadFiles,
+    removeDocument,
+    removeDocumentsBatch,
+    removeAllDocuments,
+    downloadDocument,
+    selectedDocIds,
+    toggleSelectDoc,
+    selectAllDocs,
+    clearSelection,
+  } = useDocuments(conversationId, {
+    onConversationCreated: (newId) => {
+      // Seamlessly navigate to the newly provisioned conversation
+      navigate(`/c/${newId}`, { replace: true });
+    },
+  });
 
   const [viewerDoc, setViewerDoc] = useState(null);
-  const [replaceTarget, setReplaceTarget] = useState(null);
-  const replaceInputRef = useRef(null);
 
   useEffect(() => {
-    if (isOpen && conversationId) loadDocuments();
+    if (isOpen) {
+      loadDocuments(conversationId);
+    }
   }, [isOpen, conversationId, loadDocuments]);
-
-  // Handle replace: trigger hidden file input
-  useEffect(() => {
-    if (replaceTarget && replaceInputRef.current) {
-      replaceInputRef.current.click();
-    }
-  }, [replaceTarget]);
-
-  async function handleFiles(files) {
-    for (const file of files) {
-      await uploadFile(file);
-    }
-  }
-
-  async function handleReplaceFiles(e) {
-    const file = e.target.files?.[0];
-    if (!file || !replaceTarget) return;
-    await uploadFile(file, { replaceDocId: replaceTarget.document_id });
-    setReplaceTarget(null);
-    e.target.value = '';
-  }
 
   if (!isOpen) return null;
 
-  const hasConversation = Boolean(conversationId);
+  const isAllSelected = documents.length > 0 && selectedDocIds.size === documents.length;
+  const selectedCount = selectedDocIds.size;
 
   return (
     <>
@@ -95,19 +93,49 @@ export function DocumentPopup({ isOpen, onClose, conversationId }) {
           </div>
         </div>
 
-        {/* Upload zone */}
+        {/* Upload zone — works on both existing chats and /c/new */}
         <div className={styles.dropzoneArea}>
-          {hasConversation ? (
-            <UploadDropzone
-              onFiles={handleFiles}
-              disabled={documents.length >= MAX_DOCS_PER_CONVERSATION}
-            />
-          ) : (
-            <p className={styles.noConversation}>
-              Send your first message to attach documents to this conversation.
-            </p>
-          )}
+          <UploadDropzone
+            onFiles={uploadFiles}
+            disabled={documents.length >= MAX_DOCS_PER_CONVERSATION}
+          />
         </div>
+
+        {/* Batch action toolbar */}
+        {documents.length > 0 && (
+          <div className={styles.actionBar}>
+            <label className={styles.selectGroup}>
+              <input
+                type="checkbox"
+                checked={isAllSelected}
+                onChange={() => (isAllSelected ? clearSelection() : selectAllDocs())}
+              />
+              <span>{isAllSelected ? 'Deselect all' : 'Select all'}</span>
+            </label>
+
+            <div className={styles.actionButtons}>
+              {selectedCount > 0 && (
+                <button
+                  type="button"
+                  className={`${styles.batchBtn} ${styles.batchBtnDanger}`}
+                  onClick={() => removeDocumentsBatch(Array.from(selectedDocIds))}
+                >
+                  <IconTrash size={12} style={{ display: 'inline', marginRight: 4, verticalAlign: -1 }} />
+                  Delete selected ({selectedCount})
+                </button>
+              )}
+              {selectedCount === 0 && (
+                <button
+                  type="button"
+                  className={`${styles.batchBtn} ${styles.batchBtnDanger}`}
+                  onClick={removeAllDocuments}
+                >
+                  Delete all
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Document list */}
         <div className={styles.listArea}>
@@ -123,8 +151,10 @@ export function DocumentPopup({ isOpen, onClose, conversationId }) {
                 <li key={doc.document_id} role="listitem">
                   <DocumentRow
                     document={doc}
+                    isSelected={selectedDocIds.has(doc.document_id)}
+                    onToggleSelect={toggleSelectDoc}
                     onView={(d) => setViewerDoc(d)}
-                    onReplace={(d) => setReplaceTarget(d)}
+                    onDownload={downloadDocument}
                     onDelete={removeDocument}
                   />
                 </li>
@@ -132,21 +162,10 @@ export function DocumentPopup({ isOpen, onClose, conversationId }) {
             </ul>
           )}
         </div>
-
-        {/* Hidden replace file input */}
-        <input
-          ref={replaceInputRef}
-          type="file"
-          aria-hidden="true"
-          tabIndex={-1}
-          style={{ display: 'none' }}
-          accept=".pdf,.txt,.md,.py,.js,.ts,.jsx,.tsx,.java,.go,.rs,.cpp,.c,.h,.rb,.php"
-          onChange={handleReplaceFiles}
-        />
       </div>
 
-      {/* Document viewer — separate modal */}
-      {viewerDoc && conversationId && (
+      {/* Document viewer modal */}
+      {viewerDoc && conversationId && conversationId !== 'new' && (
         <DocumentViewer
           isOpen={Boolean(viewerDoc)}
           onClose={() => setViewerDoc(null)}

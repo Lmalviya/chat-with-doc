@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Modal } from '../ui/Modal.jsx';
 import { Spinner } from '../ui/Spinner.jsx';
-import { getDocument } from '../../api/documents.js';
+import { getDocumentDownloadUrl } from '../../api/documents.js';
 import { getExtension, extToLanguage } from '../../utils/fileValidation.js';
 import hljs from 'highlight.js';
 import 'highlight.js/styles/github-dark.css';
@@ -45,15 +45,15 @@ export function DocumentViewer({ isOpen, onClose, document: doc, conversationId 
     setTextContent('');
     setContentUrl(null);
 
-    getDocument(conversationId, doc.document_id)
+    getDocumentDownloadUrl(conversationId, doc.document_id)
       .then(async (data) => {
         if (cancelled) return;
 
         if (isPdf) {
-          setContentUrl(data.content_url);
+          setContentUrl(data.download_url);
         } else {
           // Fetch the text content from the presigned URL
-          const res = await fetch(data.content_url);
+          const res = await fetch(data.download_url);
           if (!res.ok) throw new Error(`Failed to fetch content: HTTP ${res.status}`);
           const text = await res.text();
           if (!cancelled) setTextContent(text);

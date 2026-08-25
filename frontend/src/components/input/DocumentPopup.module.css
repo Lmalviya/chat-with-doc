@@ -8,7 +8,7 @@
   position: fixed;
   bottom: calc(var(--input-bar-height) + 12px);
   left: calc(var(--sidebar-width) + 24px);
-  width: min(400px, calc(100vw - var(--sidebar-width) - 48px));
+  width: min(440px, calc(100vw - var(--sidebar-width) - 48px));
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -16,7 +16,7 @@
   z-index: 100;
   display: flex;
   flex-direction: column;
-  max-height: 520px;
+  max-height: 540px;
 }
 
 .header {
@@ -67,11 +67,54 @@
   flex-shrink: 0;
 }
 
-.noConversation {
-  font-size: 0.8125rem;
-  color: var(--text-muted);
-  text-align: center;
-  padding: 8px 0;
+.actionBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px;
+  background: var(--bg-subtle, rgba(0, 0, 0, 0.03));
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.75rem;
+}
+
+.selectGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.actionButtons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.batchBtn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.batchBtn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.batchBtnDanger {
+  color: var(--danger, #ef4444);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.batchBtnDanger:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: var(--danger, #ef4444);
 }
 
 .listArea {
