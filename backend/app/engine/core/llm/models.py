@@ -72,11 +72,10 @@ def get_structured_chain_with_fallback(
     # 2. Fallback Chain: NVIDIA plain text + RobustJsonPydanticParser
     fallback_llm = get_chat_model(fallback_config, with_structured_output=False)
     parser = RobustJsonPydanticParser(pydantic_object=schema)
-    # parser = PydanticOutputParser(pydantic_object=schema)
+    escaped_schema = json.dumps(schema.model_json_schema()).replace("{", "{{").replace("}", "}}")
     fallback_prompt = ChatPromptTemplate.from_messages([
         *prompt.messages,
-                # SystemMessage(content="Respond with valid JSON matching this schema. Do not output anything other than valid JSON:\n" + parser.get_format_instructions())
-        HumanMessage(content="IMPORTANT: Respond ONLY with a valid JSON object matching this schema. Do not write any conversational text or explanation:\n" + json.dumps(schema.model_json_schema()))
+        HumanMessage(content="IMPORTANT: Respond ONLY with a valid JSON object matching this schema. Do not write any conversational text or explanation:\n" + escaped_schema)
     ])
     fallback_chain = fallback_prompt | fallback_llm | parser
 
