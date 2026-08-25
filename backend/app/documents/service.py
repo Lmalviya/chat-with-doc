@@ -121,21 +121,36 @@ class DocumentRepository:
         file_status: str | None = None,
         file_ingestion_status: str | None = None,
     ) -> Documents:
-        doc = await self.get_by_id(conversation_id, document_id)
-
+        values_to_update = {}
         if file_path is not None:
-            doc.file_path = file_path
+            values_to_update["file_path"] = file_path
         if file_name is not None:
-            doc.file_name = file_name
+            values_to_update["file_name"] = file_name
         if file_bytes is not None:
-            doc.file_bytes = file_bytes
+            values_to_update["file_bytes"] = file_bytes
         if file_type is not None:
-            doc.file_type = file_type
+            values_to_update["file_type"] = file_type
         if file_status is not None:
-            doc.file_status = file_status
+            values_to_update["file_status"] = file_status
         if file_ingestion_status is not None:
-            doc.file_ingestion_status = file_ingestion_status
+            values_to_update["file_ingestion_status"] = file_ingestion_status
 
+        if not values_to_update:
+            return await self.get_by_id(conversation_id, document_id)
+
+        stmt = (
+            update(Documents)
+            .where(
+                Documents.conversation_id == conversation_id,
+                Documents.id == document_id,
+            )
+            .values(**values_to_update)
+            .returning(Documents)
+        )
+        result = await self.db.execute(stmt)
+        doc = result.scalar_one_or_none()
+        if doc is None:
+            raise DocumentNotFound(f"Document {document_id} not found")
         await self.db.commit()
         return doc
 
@@ -176,8 +191,18 @@ class DocumentRepository:
         conversation_id: uuid.UUID,
         document_id: uuid.UUID,
     ) -> Documents:
-        doc = await self.get_by_id(conversation_id, document_id)
-        await self.db.delete(doc)
+        stmt = (
+            delete(Documents)
+            .where(
+                Documents.conversation_id == conversation_id,
+                Documents.id == document_id,
+            )
+            .returning(Documents)
+        )
+        result = await self.db.execute(stmt)
+        doc = result.scalar_one_or_none()
+        if doc is None:
+            raise DocumentNotFound(f"Document {document_id} not found")
         await self.db.commit()
         return doc
 

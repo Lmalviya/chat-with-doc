@@ -1,6 +1,6 @@
 import uuid
 from typing import Annotated
-from fastapi import APIRouter, Depends, Path, status
+from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db, get_current_user_id, get_validated_conversation
@@ -177,12 +177,16 @@ async def delete_document(
 @documents_router.delete("/batch", response_model=list[uuid.UUID])
 async def delete_documents_batch(
     conversation_id: Annotated[uuid.UUID, Path()],
-    payload: DocumentBatchDeleteSchema,
+    payload: DocumentBatchDeleteSchema | None = None,
+    document_ids: list[uuid.UUID] | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """Bulk delete multiple documents."""
+    ids = (payload.document_ids if payload and payload.document_ids else None) or document_ids or []
+    if not ids:
+        return []
     doc_service = DocumentService(db)
     return await doc_service.delete_documents_batch(
         conversation_id=conversation_id,
-        document_ids=payload.document_ids,
+        document_ids=ids,
     )
