@@ -79,11 +79,25 @@ async def retriever_node(state: ChatState, config: RunnableConfig = None):
     query = state.get("retrieval_query")
     logger.info(f"[Retriever] Fetching documents for query='{query}'")
 
-    # TODO: add retrieval logic from app.engine.retrieval
-    retrieved_documents: list[str] = [
-        f"Sample retrieved context for search query: '{query}'"
-    ]   # TODO: dummy value
-    
+    retrieved_documents: list[str] = []
+    if query:
+        try:
+            from app.engine.rag.vector.vector_store import VectorService
+            metadata = (config or {}).get("metadata", {})
+            conversation_id = metadata.get("conversation_id")
+            user_id = metadata.get("user_id")
+
+            vector_service = VectorService()
+            docs = await vector_service.get_documents(
+                query=query,
+                user_id=user_id,
+                conversation_id=conversation_id,
+                top_k=4,
+            )
+            retrieved_documents = [d.page_content for d in docs]
+        except Exception as e:
+            logger.warning(f"[Retriever] Vector search error: {e}")
+
     elapsed_ms = (time.perf_counter() - t0) * 1000
     logger.info(f"[Retriever] Retrieved {len(retrieved_documents)} documents in {elapsed_ms:.1f}ms")
     

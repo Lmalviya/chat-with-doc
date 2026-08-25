@@ -1,9 +1,10 @@
 import logging
 import uuid
 from typing import Annotated
-from fastapi import APIRouter, Body, Depends, Path, Query, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import AsyncSessionLocal
 from app.core.dependencies import get_db, get_current_user_id, get_validated_conversation
 from app.core.storage import storage
 from app.documents.doc_verifier import file_verify
@@ -18,6 +19,8 @@ from app.documents.schemas import (
     DocumentBatchUpdateSchema,
     DocumentBatchDeleteSchema,
 )
+from app.engine.rag.ingestion.pipeline import IngestionPipeline
+from app.engine.rag.vector.vector_store import VectorService
 
 logger = logging.getLogger("app.documents.router")
 
@@ -26,6 +29,26 @@ documents_router = APIRouter(
     tags=["documents"],
     dependencies=[Depends(get_validated_conversation)],  # 👈 Enforces ownership on ALL document endpoints
 )
+
+
+# ── Background Ingestion Helper ───────────────────────────────────────────────
+
+async def _run_background_ingestion(
+    document_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    user_id: uuid.UUID,
+) -> None:
+    """Async background task that processes document ingestion without blocking HTTP response."""
+    try:
+        async with AsyncSessionLocal() as session:
+            pipeline = IngestionPipeline(session)
+            await pipeline.ingest_document(
+                document_id=document_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+    except Exception as e:
+        logger.exception(f"Background ingestion failed for document_id={document_id}: {e}")
 
 
 # ── GET List & Detail ──────────────────────────────────────────────────────────
@@ -84,7 +107,7 @@ async def request_presigned_upload(
 ):
     """
     1. Verify file constraints (size <= 10MB, allowed MIME types).
-    2. Register document record in DB with status 'uploading'.
+    2. Register document record in DB with status 'uploading' and 'pending'.
     3. Generate presigned PUT URL for direct browser ➔ Object Storage upload.
     """
     logger.info(f"Requesting presigned upload: name={payload.file_name}, bytes={payload.file_bytes}, type={payload.file_type}")
@@ -110,7 +133,7 @@ async def request_presigned_upload(
         file_bytes=payload.file_bytes,
         file_type=payload.file_type,
         file_status=FileStatus.UPLOADING.value,
-        file_ingestion_status=FileIngestionStatus.INCONTEXT.value,
+        file_ingestion_status=FileIngestionStatus.PENDING.value,
     )
     logger.info(f"Presigned upload created: document_id={doc.id}, storage_key={storage_key}")
 
@@ -127,11 +150,13 @@ async def request_presigned_upload(
 async def confirm_document_upload(
     conversation_id: Annotated[uuid.UUID, Path()],
     document_id: Annotated[uuid.UUID, Path()],
+    background_tasks: BackgroundTasks,
+    user_id: uuid.UUID = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Called by frontend after browser finishes uploading bytes directly to Object Storage.
-    Marks document status as 'ready' and prepares it for RAG ingestion.
+    Marks document status as 'ready' and queues background RAG ingestion.
     """
     logger.info(f"Confirming upload completion for document_id={document_id}")
     doc_service = DocumentService(db)
@@ -140,7 +165,16 @@ async def confirm_document_upload(
         document_id=document_id,
         payload=DocumentUpdateSchema(file_status=FileStatus.READY),
     )
-    logger.info(f"Document confirmed successfully: document_id={doc.id}, status={doc.file_status}")
+
+    # Queue background RAG ingestion (Download -> Parse -> Chunk -> Embed -> Qdrant Index)
+    background_tasks.add_task(
+        _run_background_ingestion,
+        document_id=document_id,
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+
+    logger.info(f"Document confirmed and background ingestion queued: document_id={doc.id}")
     return doc
 
 
@@ -187,7 +221,7 @@ async def delete_documents_batch(
     document_ids: list[uuid.UUID] | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk delete multiple documents."""
+    """Bulk delete multiple documents from PostgreSQL, Object Storage, and Qdrant."""
     ids = (payload.document_ids if payload and payload.document_ids else None) or document_ids or []
     if not ids:
         logger.info(f"No document IDs provided for batch delete in conversation_id={conversation_id}")
@@ -200,7 +234,7 @@ async def delete_documents_batch(
         document_ids=ids,
     )
 
-    # Delete corresponding storage objects in batch
+    # 1. Delete corresponding storage objects from S3/Supabase Storage
     storage_keys = [doc.file_path for doc in deleted_docs if doc.file_path]
     if storage_keys:
         try:
@@ -208,6 +242,15 @@ async def delete_documents_batch(
             logger.info(f"Deleted {len(storage_keys)} storage objects from storage")
         except Exception as e:
             logger.warning(f"Failed to batch delete storage keys: {e}")
+
+    # 2. Delete vector embeddings from Qdrant
+    try:
+        vector_service = VectorService()
+        for doc in deleted_docs:
+            await vector_service.delete_by_document_id(doc.id)
+        logger.info(f"Deleted vector chunks from Qdrant for {len(deleted_docs)} documents")
+    except Exception as e:
+        logger.warning(f"Failed to delete vector chunks from Qdrant: {e}")
 
     return [doc.id for doc in deleted_docs]
 
@@ -218,18 +261,28 @@ async def delete_document(
     document_id: Annotated[uuid.UUID, Path()],
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a document from PostgreSQL and delete its binary object from Object Storage."""
+    """Delete a document from PostgreSQL, Object Storage, and Qdrant Vector Store."""
     logger.info(f"Deleting document document_id={document_id}")
     doc_service = DocumentService(db)
     doc = await doc_service.delete_document_by_id(
         conversation_id=conversation_id,
         document_id=document_id,
     )
-    # Remove file from Object Storage safely
+
+    # 1. Remove file from Object Storage
     try:
         if doc.file_path:
             await storage.delete_file(doc.file_path)
             logger.info(f"Deleted storage object key={doc.file_path}")
     except Exception as e:
         logger.warning(f"Failed to delete storage object key={doc.file_path}: {e}")
+
+    # 2. Remove vector embeddings from Qdrant
+    try:
+        vector_service = VectorService()
+        await vector_service.delete_by_document_id(doc.id)
+        logger.info(f"Deleted vector chunks from Qdrant for document_id={doc.id}")
+    except Exception as e:
+        logger.warning(f"Failed to delete vector chunks from Qdrant: {e}")
+
     return doc

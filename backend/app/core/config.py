@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     SUPABASE_JWT_SECRET: str = ""
     JWT_ALGORITHM: str = "HS256"
 
+    COLLECTION_NAME: str = ""
+    QDRANT_URL: str = ""
+    QDRANT_API_KEY: str | None = None
+
     @computed_field
     @property
     def S3_ENDPOINT_URL(self) -> str:

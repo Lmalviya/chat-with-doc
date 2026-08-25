@@ -17,8 +17,9 @@ class FileStatus(str, Enum):
 
 
 class FileIngestionStatus(str, Enum):
-    INCONTEXT = "incontext"
-    EMBEDDING = "embedding"
+    PENDING = "pending"
+    SUCCESS = "success"
+    FAILED  = "failed"
 
 
 class Documents(Base):
@@ -41,7 +42,7 @@ class Documents(Base):
         String, nullable=False, default=FileStatus.UPLOADING.value
     )
     file_ingestion_status: Mapped[str] = mapped_column(
-        String, nullable=False, default=FileIngestionStatus.INCONTEXT.value
+        String, nullable=False, default=FileIngestionStatus.PENDING.value
     )
 
     created_at: Mapped[datetime] = mapped_column(
@@ -57,7 +58,11 @@ class Documents(Base):
             name="ck_documents_file_status",
         ),
         CheckConstraint(
-            "file_ingestion_status IN ('incontext', 'embedding')",
-            name="ck_documents_ingestion_status",  # also fixed typo: ingession → ingestion
+            "file_ingestion_status IN ('pending', 'success', 'failed')",
+            name="ck_documents_ingestion_status",
+        ),
+        CheckConstraint(
+            "(raw_content IS NULL AND raw_content_tokens IS NULL) OR (raw_content IS NOT NULL AND raw_content_tokens IS NOT NULL)",
+            name="ck_documents_raw_content",
         ),
     )

@@ -25,7 +25,7 @@ class DocumentCreateSchema(BaseModel):
     file_type: str
     file_path: str | None = None
     file_status: FileStatus = FileStatus.UPLOADING
-    file_ingestion_status: FileIngestionStatus = FileIngestionStatus.INCONTEXT
+    file_ingestion_status: FileIngestionStatus = FileIngestionStatus.PENDING
 
 
 class DocumentListResponse(BaseModel):

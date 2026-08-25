@@ -63,7 +63,7 @@ class DocumentRepository:
         file_type: str,
         doc_id: uuid.UUID | None = None,
         file_status: str = FileStatus.UPLOADING.value,
-        file_ingestion_status: str = FileIngestionStatus.INCONTEXT.value,
+        file_ingestion_status: str = FileIngestionStatus.PENDING.value,
     ) -> Documents:
         effective_id = doc_id or uuid.uuid4()
         logger.info(f"[DB] Inserting document id={effective_id}, name={file_name}, conversation={conversation_id}")
@@ -104,7 +104,7 @@ class DocumentRepository:
                 "file_bytes": item["file_bytes"],
                 "file_type": item["file_type"],
                 "file_status": item.get("file_status") or FileStatus.UPLOADING.value,
-                "file_ingestion_status": item.get("file_ingestion_status") or FileIngestionStatus.INCONTEXT.value,
+                "file_ingestion_status": item.get("file_ingestion_status") or FileIngestionStatus.PENDING.value,
             }
             for item in items
         ]
@@ -289,7 +289,7 @@ class DocumentService:
             file_bytes=file_bytes,
             file_type=file_type,
             file_status=FileStatus.UPLOADING.value,
-            file_ingestion_status=FileIngestionStatus.INCONTEXT.value,
+            file_ingestion_status=FileIngestionStatus.PENDING.value,
         )
         return DocumentSchema.model_validate(doc)
 

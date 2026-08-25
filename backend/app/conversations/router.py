@@ -141,7 +141,34 @@ async def delete_conversation(
     user_id:         uuid.UUID = Depends(get_current_user_id),
     db:              AsyncSession = Depends(get_db),
 ):
-    """Delete a conversation and all its messages (cascade)."""
+    """
+    Delete a conversation and all its messages, documents, Object Storage files, and Qdrant vectors.
+    """
+    from app.core.storage import storage
+    from app.documents.service import DocumentService
+    from app.engine.rag.vector.vector_store import VectorService
+
     repo = ConversationRepository(db)
     await repo.get_by_id(conversation_id, user_id)
+
+    # 1. Fetch attached document storage keys before DB cascade delete
+    doc_service = DocumentService(db)
+    doc_list = await doc_service.get_documents(conversation_id)
+    storage_keys = [doc.file_path for doc in doc_list.documents if doc.file_path]
+
+    # 2. Delete conversation from PostgreSQL (foreign key CASCADE removes messages and documents rows)
     await repo.delete(conversation_id)
+
+    # 3. Clean up files from Object Storage (S3 / Supabase Storage)
+    if storage_keys:
+        try:
+            await storage.delete_file_batch(storage_keys)
+        except Exception as e:
+            pass
+
+    # 4. Clean up all vector embeddings from Qdrant for this conversation
+    try:
+        vector_service = VectorService()
+        await vector_service.delete_by_conversation_id(conversation_id)
+    except Exception as e:
+        pass
