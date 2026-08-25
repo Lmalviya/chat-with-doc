@@ -105,17 +105,18 @@ class StorageService:
             logger.info(f"Deleted object from storage: {key}")
 
     async def delete_file_batch(self, keys: list[str]) -> None:
-        """Deletes multiple objects from Object Storage in a single atomic call."""
+        """Deletes multiple objects from Object Storage concurrently."""
         if not keys:
             return
 
-        delete_object = {"Objects": [{"Key": k} for k in keys]}
         async with self._get_client() as s3:
-            await s3.delete_objects(
-                Bucket=self.bucket_name,
-                Delete=delete_object,
-            )
-            logger.info(f"Deleted {len(keys)} objects from storage.")
+            tasks = [s3.delete_object(Bucket=self.bucket_name, Key=k) for k in keys]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for k, res in zip(keys, results):
+                if isinstance(res, Exception):
+                    logger.warning(f"Failed to delete {k} from storage: {res}")
+                else:
+                    logger.info(f"Deleted object from storage: {k}")
 
 
 storage = StorageService()
