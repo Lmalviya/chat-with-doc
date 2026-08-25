@@ -1,15 +1,15 @@
 import json
+import logging
 import re
 from typing import Type, Any
 from pydantic import BaseModel
 from langchain_core.prompts import ChatPromptTemplate
-# from langchain_core.messages import SystemMessage
-# from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.messages import SystemMessage, BaseMessage, HumanMessage
 from langchain_core.output_parsers import BaseOutputParser
 from langchain_core.exceptions import OutputParserException
 from langchain_core.runnables import Runnable
 
+from app.core.config import settings
 from app.engine.core.llm.model_config import (
     REWRITER_PRIMARY_CONFIG,
     REWRITER_FALLBACK_CONFIG,
@@ -21,6 +21,8 @@ from app.engine.core.llm.model_config import (
 )
 from app.engine.core.llm.provider import get_chat_model
 from app.engine.chat.schemas import RewriteDecision, TitleResponse
+
+logger = logging.getLogger("app.engine.models")
 
 
 class RobustJsonPydanticParser(BaseOutputParser):
@@ -69,18 +71,22 @@ def get_structured_chain_with_fallback(
     primary_llm = get_chat_model(primary_config, with_structured_output=True, schema=schema)
     primary_chain = prompt | primary_llm
 
-    # 2. Fallback Chain: NVIDIA plain text + RobustJsonPydanticParser
-    fallback_llm = get_chat_model(fallback_config, with_structured_output=False)
-    parser = RobustJsonPydanticParser(pydantic_object=schema)
-    escaped_schema = json.dumps(schema.model_json_schema()).replace("{", "{{").replace("}", "}}")
-    fallback_prompt = ChatPromptTemplate.from_messages([
-        *prompt.messages,
-        HumanMessage(content="IMPORTANT: Respond ONLY with a valid JSON object matching this schema. Do not write any conversational text or explanation:\n" + escaped_schema)
-    ])
-    fallback_chain = fallback_prompt | fallback_llm | parser
+    # 2. Resilient Fallback Chain (only attached if fallback provider is reachable without blocking)
+    try:
+        if settings.NVIDIA_API_KEY:
+            fallback_llm = get_chat_model(fallback_config, with_structured_output=False)
+            parser = RobustJsonPydanticParser(pydantic_object=schema)
+            escaped_schema = json.dumps(schema.model_json_schema()).replace("{", "{{").replace("}", "}}")
+            fallback_prompt = ChatPromptTemplate.from_messages([
+                *prompt.messages,
+                HumanMessage(content="IMPORTANT: Respond ONLY with a valid JSON object matching this schema. Do not write any conversational text or explanation:\n" + escaped_schema)
+            ])
+            fallback_chain = fallback_prompt | fallback_llm | parser
+            return primary_chain.with_fallbacks([fallback_chain])
+    except Exception as e:
+        logger.warning(f"Could not initialize structured fallback chain: {e}")
 
-    # 3. Fallback at the chain level
-    return primary_chain.with_fallbacks([fallback_chain])
+    return primary_chain
 
 
 def rewriter_chain(prompt: ChatPromptTemplate) -> Runnable:
@@ -103,6 +109,10 @@ def title_generator_chain(prompt: ChatPromptTemplate) -> Runnable:
 
 def generator_llm():
     primary_llm = get_chat_model(GENERATOR_PRIMARY_CONFIG, with_structured_output=False)
-    fallback_llm = get_chat_model(GENERATOR_FALLBACK_CONFIG, with_structured_output=False)
-    return primary_llm.with_fallbacks([fallback_llm])
-
+    try:
+        if settings.NVIDIA_API_KEY:
+            fallback_llm = get_chat_model(GENERATOR_FALLBACK_CONFIG, with_structured_output=False)
+            return primary_llm.with_fallbacks([fallback_llm])
+    except Exception as e:
+        logger.warning(f"Could not initialize generator fallback LLM: {e}")
+    return primary_llm
