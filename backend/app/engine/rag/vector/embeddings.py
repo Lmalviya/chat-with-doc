@@ -6,7 +6,7 @@ logger = logging.getLogger("app.rag.embedder")
 
 
 EMBEDDING_MODEL_NAME: str = "models/gemini-embedding-001"
-EMBEDDING_DIMENSION: int = 768
+EMBEDDING_DIMENSION: int = 3072
 
 def get_embedding_model() -> GoogleGenerativeAIEmbeddings:
     """Returns a configured GoogleGenerativeAIEmbeddings instance."""

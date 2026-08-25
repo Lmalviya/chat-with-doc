@@ -40,12 +40,26 @@ class VectorService:
         )
 
     def _ensure_collection_exists(self) -> None:
-        """Ensures collection exists with cosine distance and multi-tenant payload indexes."""
+        """Ensures collection exists with cosine distance, 3072 dimensions, and multi-tenant payload indexes."""
         try:
             collections = [c.name for c in self.client.get_collections().collections]
         except Exception as e:
             logger.warning(f"Could not connect to Qdrant at startup (will retry on query): {e}")
             return
+
+        # Check if existing collection has dimension mismatch (e.g. 768 vs 3072)
+        if self.collection_name in collections:
+            try:
+                col_info = self.client.get_collection(self.collection_name)
+                current_size = getattr(col_info.config.params.vectors, "size", None)
+                if current_size and current_size != EMBEDDING_DIMENSION:
+                    logger.warning(
+                        f"Recreating collection '{self.collection_name}': existing size ({current_size}) != required ({EMBEDDING_DIMENSION})"
+                    )
+                    self.client.delete_collection(self.collection_name)
+                    collections.remove(self.collection_name)
+            except Exception as e:
+                logger.warning(f"Could not inspect existing collection config: {e}")
 
         if self.collection_name not in collections:
             logger.info(f"Creating collection '{self.collection_name}' (dim={EMBEDDING_DIMENSION})")
@@ -59,12 +73,21 @@ class VectorService:
                 )
 
                 # 1. Tenant index for user isolation
-                self.client.create_payload_index(
-                    collection_name=self.collection_name,
-                    field_name="metadata.user_id",
-                    field_schema=models.PayloadSchemaType.KEYWORD,
-                    is_tenant=True,
-                )
+                try:
+                    self.client.create_payload_index(
+                        collection_name=self.collection_name,
+                        field_name="metadata.user_id",
+                        field_schema=models.KeywordIndexParams(
+                            type=models.KeywordIndexType.KEYWORD,
+                            is_tenant=True,
+                        ),
+                    )
+                except Exception:
+                    self.client.create_payload_index(
+                        collection_name=self.collection_name,
+                        field_name="metadata.user_id",
+                        field_schema=models.PayloadSchemaType.KEYWORD,
+                    )
 
                 # 2. Index for conversation isolation
                 self.client.create_payload_index(
