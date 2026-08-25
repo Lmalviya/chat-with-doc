@@ -9,14 +9,19 @@ logger = logging.getLogger("app.core.storage")
 
 
 class StorageService:
-    """Async client for Cloudflare R2 (S3-compatible) object storage."""
+    """
+    Universal S3-Compatible Object Storage Service.
+    Seamlessly works with Supabase S3, Cloudflare R2, AWS S3, MinIO, or Wasabi
+    without modifying code.
+    """
 
     def __init__(self) -> None:
         self.session = aioboto3.Session()
-        self.bucket_name = settings.R2_BUCKET_NAME
-        self.endpoint_url = settings.R2_ENDPOINT_URL
-        self.access_key = settings.R2_ACCESS_KEY_ID
-        self.secret_key = settings.R2_SECRET_ACCESS_KEY
+        self.bucket_name = settings.S3_BUCKET_NAME
+        self.endpoint_url = settings.S3_ENDPOINT_URL
+        self.access_key = settings.S3_ACCESS_KEY_ID
+        self.secret_key = settings.S3_SECRET_ACCESS_KEY
+        self.region_name = settings.S3_REGION_NAME
 
     def _get_client(self):
         return self.session.client(
@@ -24,11 +29,11 @@ class StorageService:
             endpoint_url=self.endpoint_url,
             aws_access_key_id=self.access_key,
             aws_secret_access_key=self.secret_key,
-            region_name="auto",
+            region_name=self.region_name,
             config=Config(signature_version="s3v4"),
         )
 
-    # ── Presigned URLs (Direct Browser ➔ R2) ──────────────────────────
+    # ── Presigned URLs (Direct Browser ➔ Object Storage) ───────────────
 
     async def generate_presigned_upload_url(
         self,
@@ -38,7 +43,7 @@ class StorageService:
     ) -> str:
         """
         Generates a presigned PUT URL allowing the browser to upload
-        directly to Cloudflare R2 without passing through the backend.
+        directly to Object Storage (Supabase S3 / R2 / AWS) without passing through the backend.
         """
         async with self._get_client() as s3:
             return await s3.generate_presigned_url(
@@ -58,7 +63,7 @@ class StorageService:
     ) -> str:
         """
         Generates a presigned GET URL allowing the browser to download
-        or preview a file directly from Cloudflare R2.
+        or preview a file directly from Object Storage.
         """
         async with self._get_client() as s3:
             return await s3.generate_presigned_url(
@@ -73,7 +78,7 @@ class StorageService:
     # ── Backend Ingestion & File Retrieval ─────────────────────────────
 
     async def download_file(self, key: str) -> bytes:
-        """Downloads full file bytes from R2 (used by RAG text extraction/parsing)."""
+        """Downloads full file bytes from Object Storage (used by RAG text extraction/parsing)."""
         async with self._get_client() as s3:
             result = await s3.get_object(Bucket=self.bucket_name, Key=key)
             async with result["Body"] as stream:
@@ -94,13 +99,13 @@ class StorageService:
     # ── Deletion Operations ────────────────────────────────────────────
 
     async def delete_file(self, key: str) -> None:
-        """Deletes a single object from R2."""
+        """Deletes a single object from Object Storage."""
         async with self._get_client() as s3:
             await s3.delete_object(Bucket=self.bucket_name, Key=key)
-            logger.info(f"Deleted object from R2: {key}")
+            logger.info(f"Deleted object from storage: {key}")
 
     async def delete_file_batch(self, keys: list[str]) -> None:
-        """Deletes multiple objects from R2 in a single atomic call."""
+        """Deletes multiple objects from Object Storage in a single atomic call."""
         if not keys:
             return
 
@@ -110,6 +115,7 @@ class StorageService:
                 Bucket=self.bucket_name,
                 Delete=delete_object,
             )
-            logger.info(f"Deleted {len(keys)} objects from R2.")
+            logger.info(f"Deleted {len(keys)} objects from storage.")
+
 
 storage = StorageService()
