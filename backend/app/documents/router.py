@@ -1,7 +1,7 @@
 import logging
 import uuid
 from typing import Annotated
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Body, Depends, Path, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db, get_current_user_id, get_validated_conversation
@@ -28,6 +28,8 @@ documents_router = APIRouter(
 )
 
 
+# ── GET List & Detail ──────────────────────────────────────────────────────────
+
 @documents_router.get("/", response_model=DocumentListResponse)
 async def get_document_list(
     conversation_id: Annotated[uuid.UUID, Path()],
@@ -39,6 +41,21 @@ async def get_document_list(
     result = await doc_service.get_documents(conversation_id=conversation_id)
     logger.info(f"Found {len(result.documents)} documents for conversation_id={conversation_id}")
     return result
+
+
+@documents_router.get("/{document_id}/download-url")
+async def get_download_presigned_url(
+    conversation_id: Annotated[uuid.UUID, Path()],
+    document_id: Annotated[uuid.UUID, Path()],
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a presigned GET URL for viewing or downloading the file directly from storage."""
+    logger.info(f"Generating presigned download URL for document_id={document_id}")
+    doc_service = DocumentService(db)
+    doc = await doc_service.get_document_by_id(conversation_id, document_id)
+    url = await storage.generate_presigned_download_url(key=doc.file_path)
+    logger.info(f"Generated download URL for key={doc.file_path}")
+    return {"download_url": url, "file_name": doc.file_name}
 
 
 @documents_router.get("/{document_id}", response_model=DocumentSchema)
@@ -56,20 +73,7 @@ async def get_document_by_id(
     )
 
 
-@documents_router.get("/{document_id}/download-url")
-async def get_download_presigned_url(
-    conversation_id: Annotated[uuid.UUID, Path()],
-    document_id: Annotated[uuid.UUID, Path()],
-    db: AsyncSession = Depends(get_db),
-):
-    """Generate a presigned GET URL for viewing or downloading the file directly from storage."""
-    logger.info(f"Generating presigned download URL for document_id={document_id}")
-    doc_service = DocumentService(db)
-    doc = await doc_service.get_document_by_id(conversation_id, document_id)
-    url = await storage.generate_presigned_download_url(key=doc.file_path)
-    logger.info(f"Generated download URL for key={doc.file_path}")
-    return {"download_url": url, "file_name": doc.file_name}
-
+# ── Upload & Confirm ───────────────────────────────────────────────────────────
 
 @documents_router.post("/presign", response_model=DocumentPresignResponse)
 async def request_presigned_upload(
@@ -136,8 +140,25 @@ async def confirm_document_upload(
         document_id=document_id,
         payload=DocumentUpdateSchema(file_status=FileStatus.READY),
     )
-    logger.info(f"Document confirmed successfully: document_id={doc.document_id}, status={doc.file_status}")
+    logger.info(f"Document confirmed successfully: document_id={doc.id}, status={doc.file_status}")
     return doc
+
+
+# ── PATCH Updates (Static /batch BEFORE dynamic /{document_id}) ────────────────
+
+@documents_router.patch("/batch", response_model=list[DocumentSchema])
+async def update_documents_batch(
+    conversation_id: Annotated[uuid.UUID, Path()],
+    payload: DocumentBatchUpdateSchema,
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk update settings for multiple documents simultaneously."""
+    logger.info(f"Bulk updating {len(payload.document_ids)} documents")
+    doc_service = DocumentService(db)
+    return await doc_service.update_documents_batch(
+        conversation_id=conversation_id,
+        payload=payload,
+    )
 
 
 @documents_router.patch("/{document_id}", response_model=DocumentSchema)
@@ -157,48 +178,12 @@ async def update_document(
     )
 
 
-@documents_router.patch("/batch", response_model=list[DocumentSchema])
-async def update_documents_batch(
-    conversation_id: Annotated[uuid.UUID, Path()],
-    payload: DocumentBatchUpdateSchema,
-    db: AsyncSession = Depends(get_db),
-):
-    """Bulk update settings for multiple documents simultaneously."""
-    logger.info(f"Bulk updating {len(payload.document_ids)} documents")
-    doc_service = DocumentService(db)
-    return await doc_service.update_documents_batch(
-        conversation_id=conversation_id,
-        payload=payload,
-    )
-
-
-@documents_router.delete("/{document_id}", response_model=DocumentSchema)
-async def delete_document(
-    conversation_id: Annotated[uuid.UUID, Path()],
-    document_id: Annotated[uuid.UUID, Path()],
-    db: AsyncSession = Depends(get_db),
-):
-    """Delete a document from PostgreSQL and delete its binary object from Object Storage."""
-    logger.info(f"Deleting document document_id={document_id}")
-    doc_service = DocumentService(db)
-    doc = await doc_service.delete_document_by_id(
-        conversation_id=conversation_id,
-        document_id=document_id,
-    )
-    # Remove file from Object Storage safely
-    try:
-        if doc.file_path:
-            await storage.delete_file(doc.file_path)
-            logger.info(f"Deleted storage object key={doc.file_path}")
-    except Exception as e:
-        logger.warning(f"Failed to delete storage object key={doc.file_path}: {e}")
-    return doc
-
+# ── DELETE Operations (Static /batch BEFORE dynamic /{document_id}) ────────────
 
 @documents_router.delete("/batch", response_model=list[uuid.UUID])
 async def delete_documents_batch(
     conversation_id: Annotated[uuid.UUID, Path()],
-    payload: DocumentBatchDeleteSchema | None = None,
+    payload: DocumentBatchDeleteSchema | None = Body(default=None),
     document_ids: list[uuid.UUID] | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -225,3 +210,26 @@ async def delete_documents_batch(
             logger.warning(f"Failed to batch delete storage keys: {e}")
 
     return [doc.id for doc in deleted_docs]
+
+
+@documents_router.delete("/{document_id}", response_model=DocumentSchema)
+async def delete_document(
+    conversation_id: Annotated[uuid.UUID, Path()],
+    document_id: Annotated[uuid.UUID, Path()],
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a document from PostgreSQL and delete its binary object from Object Storage."""
+    logger.info(f"Deleting document document_id={document_id}")
+    doc_service = DocumentService(db)
+    doc = await doc_service.delete_document_by_id(
+        conversation_id=conversation_id,
+        document_id=document_id,
+    )
+    # Remove file from Object Storage safely
+    try:
+        if doc.file_path:
+            await storage.delete_file(doc.file_path)
+            logger.info(f"Deleted storage object key={doc.file_path}")
+    except Exception as e:
+        logger.warning(f"Failed to delete storage object key={doc.file_path}: {e}")
+    return doc

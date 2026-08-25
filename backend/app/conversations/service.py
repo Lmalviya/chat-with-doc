@@ -134,7 +134,7 @@ class ConversationService:
         convo = await self.conv_repo.get_by_id(conversation_id, user_id)
         
         gen_title = await generate_conversation_title(
-            first_user_message=first_message_content,
+            content=first_message_content,
             conversation_id=conversation_id,
             request_id=request_id,
             user_id=user_id,

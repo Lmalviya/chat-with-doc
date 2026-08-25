@@ -43,7 +43,7 @@ class DocumentBatchUploadSchema(BaseModel):
 
 
 class DocumentBatchDeleteSchema(BaseModel):
-    document_ids: list[uuid.UUID]
+    document_ids: list[uuid.UUID] = []
 
 
 class DocumentBatchUpdateSchema(BaseModel):
