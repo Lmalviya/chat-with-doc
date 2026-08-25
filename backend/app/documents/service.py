@@ -1,3 +1,4 @@
+import logging
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, insert, update, delete
@@ -13,6 +14,8 @@ from app.documents.schemas import (
     DocumentBatchUploadSchema,
 )
 
+logger = logging.getLogger("app.documents.service")
+
 
 class DocumentRepository:
     def __init__(self, db: AsyncSession) -> None:
@@ -23,14 +26,17 @@ class DocumentRepository:
         conversation_id: uuid.UUID,
         document_id: uuid.UUID,
     ) -> Documents:
+        logger.info(f"[DB] Fetching document id={document_id} in conversation={conversation_id}")
         stmt = select(Documents).where(Documents.id == document_id)
         result = await self.db.execute(stmt)
         doc = result.scalar_one_or_none()
 
         if doc is None:
+            logger.warning(f"[DB] Document id={document_id} not found")
             raise DocumentNotFound(f"Document {document_id} not found")
 
         if doc.conversation_id != conversation_id:
+            logger.warning(f"[DB] Document id={document_id} does not belong to conversation={conversation_id}")
             raise DocumentForbidden(f"Document {document_id} does not belong to conversation {conversation_id}")
 
         return doc
@@ -39,6 +45,7 @@ class DocumentRepository:
         self,
         conversation_id: uuid.UUID,
     ) -> list[Documents]:
+        logger.info(f"[DB] Listing documents for conversation={conversation_id}")
         stmt = (
             select(Documents)
             .where(Documents.conversation_id == conversation_id)
@@ -59,6 +66,7 @@ class DocumentRepository:
         file_ingestion_status: str = FileIngestionStatus.INCONTEXT.value,
     ) -> Documents:
         effective_id = doc_id or uuid.uuid4()
+        logger.info(f"[DB] Inserting document id={effective_id}, name={file_name}, conversation={conversation_id}")
 
         stmt = (
             insert(Documents)
@@ -101,6 +109,7 @@ class DocumentRepository:
             for item in items
         ]
 
+        logger.info(f"[DB] Batch inserting {len(records)} documents for conversation={conversation_id}")
         stmt = (
             insert(Documents)
             .values(records)
@@ -138,6 +147,7 @@ class DocumentRepository:
         if not values_to_update:
             return await self.get_by_id(conversation_id, document_id)
 
+        logger.info(f"[DB] Updating document id={document_id} with values={values_to_update}")
         stmt = (
             update(Documents)
             .where(
@@ -173,6 +183,7 @@ class DocumentRepository:
         if not values_to_update:
             return await self.get_by_conversation_id(conversation_id)
 
+        logger.info(f"[DB] Bulk updating {len(document_ids)} documents with {values_to_update}")
         stmt = (
             update(Documents)
             .where(
@@ -191,6 +202,7 @@ class DocumentRepository:
         conversation_id: uuid.UUID,
         document_id: uuid.UUID,
     ) -> Documents:
+        logger.info(f"[DB] Deleting document id={document_id} from conversation={conversation_id}")
         stmt = (
             delete(Documents)
             .where(
@@ -210,26 +222,29 @@ class DocumentRepository:
         self,
         conversation_id: uuid.UUID,
         document_ids: list[uuid.UUID],
-    ) -> list[uuid.UUID]:
+    ) -> list[Documents]:
         if not document_ids:
             return []
 
+        logger.info(f"[DB] Batch deleting {len(document_ids)} documents from conversation={conversation_id}")
         stmt = (
             delete(Documents)
             .where(
                 Documents.conversation_id == conversation_id,
                 Documents.id.in_(document_ids),
             )
-            .returning(Documents.id)
+            .returning(Documents)
         )
         result = await self.db.execute(stmt)
+        docs = list(result.scalars().all())
         await self.db.commit()
-        return list(result.scalars().all())
+        return docs
 
     async def delete_all(
         self,
         conversation_id: uuid.UUID,
     ) -> int:
+        logger.info(f"[DB] Deleting all documents from conversation={conversation_id}")
         stmt = delete(Documents).where(Documents.conversation_id == conversation_id)
         result = await self.db.execute(stmt)
         await self.db.commit()
@@ -337,7 +352,7 @@ class DocumentService:
         self,
         conversation_id: uuid.UUID,
         document_ids: list[uuid.UUID],
-    ) -> list[uuid.UUID]:
+    ) -> list[Documents]:
         return await self.repo.delete_batch(conversation_id, document_ids)
 
     async def delete_all_documents(

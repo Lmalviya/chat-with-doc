@@ -31,12 +31,6 @@ class Settings(BaseSettings):
     STORAGE_BUCKET_NAME: str = "chat-with-docs"
     STORAGE_REGION: str = "auto"
 
-    # Backward compatibility aliases for R2 if set
-    R2_ACCOUNT_ID: str | None = None
-    R2_ACCESS_KEY_ID: str | None = None
-    R2_SECRET_ACCESS_KEY: str | None = None
-    R2_BUCKET_NAME: str | None = None
-
     # ── LLM APIs ───────────────────────────────────────────────────────────────
     NVIDIA_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
@@ -72,22 +66,22 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def S3_ACCESS_KEY_ID(self) -> str:
-        return self.STORAGE_ACCESS_KEY_ID or self.R2_ACCESS_KEY_ID or ""
+        return self.STORAGE_ACCESS_KEY_ID
 
     @computed_field
     @property
     def S3_SECRET_ACCESS_KEY(self) -> str:
-        return self.STORAGE_SECRET_ACCESS_KEY or self.R2_SECRET_ACCESS_KEY or ""
+        return self.STORAGE_SECRET_ACCESS_KEY
 
     @computed_field
     @property
     def S3_BUCKET_NAME(self) -> str:
-        return self.STORAGE_BUCKET_NAME or self.R2_BUCKET_NAME or "chat-with-docs"
+        return self.STORAGE_BUCKET_NAME
 
     @computed_field
     @property
     def S3_REGION_NAME(self) -> str:
-        return self.STORAGE_REGION if self.STORAGE_REGION != "auto" else (self.DATABASE_REGION or "auto")
+        return self.STORAGE_REGION
 
     @computed_field
     @property

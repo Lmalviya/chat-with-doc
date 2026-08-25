@@ -28,19 +28,35 @@ from app.messages.router import messages_router
 from app.documents.router import documents_router
 
 
+import asyncio
+import logging
+
+logger = logging.getLogger("app.main")
+
+
 # ── Lifespan ───────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    async with database_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        # Automatic non-destructive schema adjustments for Supabase user sync
+    max_retries = 5
+    for attempt in range(1, max_retries + 1):
         try:
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255);"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(255);"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;"))
-            await conn.execute(text("ALTER TABLE users ALTER COLUMN expires_at DROP NOT NULL;"))
-        except Exception:
-            pass
+            async with database_engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+                try:
+                    await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(255);"))
+                    await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(255);"))
+                    await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;"))
+                    await conn.execute(text("ALTER TABLE users ALTER COLUMN expires_at DROP NOT NULL;"))
+                except Exception:
+                    pass
+            logger.info("Database schema initialized and verified.")
+            break
+        except Exception as exc:
+            if attempt == max_retries:
+                logger.error(f"Failed to connect to database after {max_retries} attempts: {exc}")
+                raise exc
+            logger.warning(f"Database connection attempt {attempt}/{max_retries} failed ({exc}). Retrying in 1s...")
+            await asyncio.sleep(1.0)
     yield
 
 

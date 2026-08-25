@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Query, status
@@ -18,6 +19,8 @@ from app.documents.schemas import (
     DocumentBatchDeleteSchema,
 )
 
+logger = logging.getLogger("app.documents.router")
+
 documents_router = APIRouter(
     prefix="/conversations/{conversation_id}/documents",
     tags=["documents"],
@@ -31,8 +34,11 @@ async def get_document_list(
     db: AsyncSession = Depends(get_db),
 ):
     """List all documents attached to this conversation."""
+    logger.info(f"Listing documents for conversation_id={conversation_id}")
     doc_service = DocumentService(db)
-    return await doc_service.get_documents(conversation_id=conversation_id)
+    result = await doc_service.get_documents(conversation_id=conversation_id)
+    logger.info(f"Found {len(result.documents)} documents for conversation_id={conversation_id}")
+    return result
 
 
 @documents_router.get("/{document_id}", response_model=DocumentSchema)
@@ -42,6 +48,7 @@ async def get_document_by_id(
     db: AsyncSession = Depends(get_db),
 ):
     """Retrieve metadata for a single document."""
+    logger.info(f"Fetching document document_id={document_id} for conversation_id={conversation_id}")
     doc_service = DocumentService(db)
     return await doc_service.get_document_by_id(
         conversation_id=conversation_id,
@@ -55,10 +62,12 @@ async def get_download_presigned_url(
     document_id: Annotated[uuid.UUID, Path()],
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate a presigned GET URL for viewing or downloading the file directly from Cloudflare R2."""
+    """Generate a presigned GET URL for viewing or downloading the file directly from storage."""
+    logger.info(f"Generating presigned download URL for document_id={document_id}")
     doc_service = DocumentService(db)
     doc = await doc_service.get_document_by_id(conversation_id, document_id)
     url = await storage.generate_presigned_download_url(key=doc.file_path)
+    logger.info(f"Generated download URL for key={doc.file_path}")
     return {"download_url": url, "file_name": doc.file_name}
 
 
@@ -72,8 +81,9 @@ async def request_presigned_upload(
     """
     1. Verify file constraints (size <= 10MB, allowed MIME types).
     2. Register document record in DB with status 'uploading'.
-    3. Generate presigned PUT URL for direct browser ➔ Cloudflare R2 upload.
+    3. Generate presigned PUT URL for direct browser ➔ Object Storage upload.
     """
+    logger.info(f"Requesting presigned upload: name={payload.file_name}, bytes={payload.file_bytes}, type={payload.file_type}")
     file_verify(
         file_size=payload.file_bytes,
         file_type=payload.file_type,
@@ -81,9 +91,9 @@ async def request_presigned_upload(
     )
 
     new_doc_id = uuid.uuid4()
-    r2_key = f"documents/{user_id}/{conversation_id}/{new_doc_id}/{payload.file_name}"
+    storage_key = f"documents/{user_id}/{conversation_id}/{new_doc_id}/{payload.file_name}"
     upload_url = await storage.generate_presigned_upload_url(
-        key=r2_key,
+        key=storage_key,
         content_type=payload.file_type,
     )
 
@@ -91,18 +101,19 @@ async def request_presigned_upload(
     doc = await doc_service.repo.add(
         conversation_id=conversation_id,
         doc_id=new_doc_id,
-        file_path=r2_key,
+        file_path=storage_key,
         file_name=payload.file_name,
         file_bytes=payload.file_bytes,
         file_type=payload.file_type,
         file_status=FileStatus.UPLOADING.value,
         file_ingestion_status=FileIngestionStatus.INCONTEXT.value,
     )
+    logger.info(f"Presigned upload created: document_id={doc.id}, storage_key={storage_key}")
 
     return DocumentPresignResponse(
         document_id=doc.id,
         upload_url=upload_url,
-        file_path=r2_key,
+        file_path=storage_key,
         is_duplicate=False,
         file_status=doc.file_status,
     )
@@ -115,15 +126,17 @@ async def confirm_document_upload(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Called by frontend after browser finishes uploading bytes directly to Cloudflare R2.
+    Called by frontend after browser finishes uploading bytes directly to Object Storage.
     Marks document status as 'ready' and prepares it for RAG ingestion.
     """
+    logger.info(f"Confirming upload completion for document_id={document_id}")
     doc_service = DocumentService(db)
     doc = await doc_service.update_document(
         conversation_id=conversation_id,
         document_id=document_id,
         payload=DocumentUpdateSchema(file_status=FileStatus.READY),
     )
+    logger.info(f"Document confirmed successfully: document_id={doc.document_id}, status={doc.file_status}")
     return doc
 
 
@@ -135,6 +148,7 @@ async def update_document(
     db: AsyncSession = Depends(get_db),
 ):
     """Update settings (e.g. file_ingestion_status) for a single document."""
+    logger.info(f"Updating document_id={document_id}, payload={payload}")
     doc_service = DocumentService(db)
     return await doc_service.update_document(
         conversation_id=conversation_id,
@@ -150,6 +164,7 @@ async def update_documents_batch(
     db: AsyncSession = Depends(get_db),
 ):
     """Bulk update settings for multiple documents simultaneously."""
+    logger.info(f"Bulk updating {len(payload.document_ids)} documents")
     doc_service = DocumentService(db)
     return await doc_service.update_documents_batch(
         conversation_id=conversation_id,
@@ -163,14 +178,20 @@ async def delete_document(
     document_id: Annotated[uuid.UUID, Path()],
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete a document from PostgreSQL and delete its binary object from Cloudflare R2."""
+    """Delete a document from PostgreSQL and delete its binary object from Object Storage."""
+    logger.info(f"Deleting document document_id={document_id}")
     doc_service = DocumentService(db)
     doc = await doc_service.delete_document_by_id(
         conversation_id=conversation_id,
         document_id=document_id,
     )
-    # Remove file from Cloudflare R2
-    await storage.delete_file(doc.file_path)
+    # Remove file from Object Storage safely
+    try:
+        if doc.file_path:
+            await storage.delete_file(doc.file_path)
+            logger.info(f"Deleted storage object key={doc.file_path}")
+    except Exception as e:
+        logger.warning(f"Failed to delete storage object key={doc.file_path}: {e}")
     return doc
 
 
@@ -184,9 +205,23 @@ async def delete_documents_batch(
     """Bulk delete multiple documents."""
     ids = (payload.document_ids if payload and payload.document_ids else None) or document_ids or []
     if not ids:
+        logger.info(f"No document IDs provided for batch delete in conversation_id={conversation_id}")
         return []
+
+    logger.info(f"Batch deleting {len(ids)} documents for conversation_id={conversation_id}")
     doc_service = DocumentService(db)
-    return await doc_service.delete_documents_batch(
+    deleted_docs = await doc_service.delete_documents_batch(
         conversation_id=conversation_id,
         document_ids=ids,
     )
+
+    # Delete corresponding storage objects in batch
+    storage_keys = [doc.file_path for doc in deleted_docs if doc.file_path]
+    if storage_keys:
+        try:
+            await storage.delete_file_batch(storage_keys)
+            logger.info(f"Deleted {len(storage_keys)} storage objects from storage")
+        except Exception as e:
+            logger.warning(f"Failed to batch delete storage keys: {e}")
+
+    return [doc.id for doc in deleted_docs]
